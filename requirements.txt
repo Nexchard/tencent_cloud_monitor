@@ -1,0 +1,5 @@
+tencentcloud-sdk-python
+python-dotenv
+pytz
+requests
+mysql-connector-python 
