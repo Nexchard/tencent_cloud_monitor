@@ -61,35 +61,15 @@ class EmailService:
             logger.error(f"邮件发送失败: {str(e)}")
             return False
             
-    def format_resource_message(self, account_name: str, 
-                              regional_resources: Dict, 
-                              global_resources: Dict) -> str:
-        """
-        格式化资源信息为邮件内容
-        """
-        # 检查是否有需要告警的资源
-        has_resources = False
-        for resources in regional_resources.values():
-            if resources:
-                has_resources = True
-                break
-        for resources in global_resources.values():
-            if resources:
-                has_resources = True
-                break
-            
-        if not has_resources:
-            return ""  # 如果没有需要告警的资源，返回空字符串
-        
+    def format_resource_message(self, account_name, regional_resources, global_resources):
+        """格式化资源信息为消息"""
         messages = [f"📢腾讯云 {account_name} 资源到期提醒\n"]
         
         # 处理CVM资源
         cvm_resources = []
-        for resources in regional_resources.values():
-            if isinstance(resources, list):
-                for resource in resources:
-                    if resource.get('Type') == 'CVM':
-                        cvm_resources.append(resource)
+        for region_data in regional_resources.values():
+            if 'CVM' in region_data:
+                cvm_resources.extend(region_data['CVM'])
         
         if cvm_resources:
             messages.append("=== 云服务器 ===")
@@ -104,11 +84,9 @@ class EmailService:
         
         # 处理轻量应用服务器资源
         lighthouse_resources = []
-        for resources in regional_resources.values():
-            if isinstance(resources, list):
-                for resource in resources:
-                    if resource.get('Type') == 'Lighthouse':
-                        lighthouse_resources.append(resource)
+        for region_data in regional_resources.values():
+            if 'Lighthouse' in region_data:
+                lighthouse_resources.extend(region_data['Lighthouse'])
         
         if lighthouse_resources:
             messages.append("=== 轻量应用服务器 ===")
@@ -122,11 +100,9 @@ class EmailService:
         
         # 处理CBS资源
         cbs_resources = []
-        for resources in regional_resources.values():
-            if isinstance(resources, list):
-                for resource in resources:
-                    if resource.get('Type') == 'CBS':
-                        cbs_resources.append(resource)
+        for region_data in regional_resources.values():
+            if 'CBS' in region_data:
+                cbs_resources.extend(region_data['CBS'])
         
         if cbs_resources:
             messages.append("=== 云硬盘 ===")
@@ -140,11 +116,25 @@ class EmailService:
                 ])
         
         # 处理域名资源
-        if global_resources.get('Domain'):
+        domain_resources = global_resources.get('Domain', [])
+        if domain_resources:
             messages.append("=== 域名 ===")
-            for resource in global_resources['Domain']:
+            for resource in domain_resources:
                 messages.extend([
                     f"名称: {resource['Domain']}",
+                    f"到期时间: {resource['ExpiredTime']}",
+                    f"剩余天数: {resource['DifferDays']}天\n"
+                ])
+        
+        # 处理SSL证书资源
+        ssl_resources = global_resources.get('SSL', [])
+        if ssl_resources:
+            messages.append("=== SSL证书 ===")
+            for resource in ssl_resources:
+                messages.extend([
+                    f"域名: {resource['Domain']}",
+                    f"证书类型: {resource['ProductName']}",
+                    f"项目: {resource.get('ProjectName', '未知项目')}",
                     f"到期时间: {resource['ExpiredTime']}",
                     f"剩余天数: {resource['DifferDays']}天\n"
                 ])

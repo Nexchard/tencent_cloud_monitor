@@ -17,6 +17,7 @@ from support_services.database_service import DatabaseService
 from dotenv import load_dotenv
 from utils.alert_utils import filter_resources_by_days
 from utils.log_utils import setup_logger
+from monitoring_services.ssl_service import SSLService
 
 # 加载环境变量
 load_dotenv()
@@ -42,7 +43,8 @@ SERVICE_TYPES = {
         },
         # 不需要region的服务
         'GLOBAL': {
-            'Domain': DomainService
+            'Domain': DomainService,
+            'SSL': SSLService
         }
     },
     # 账单类服务
@@ -68,10 +70,8 @@ def parse_args():
 def get_regional_resources(account_info, client_profile):
     """获取需要region的资源"""
     cred = create_credential(account_info["secret_id"], account_info["secret_key"])
-    all_resources = {
-        service_name: [] 
-        for service_name in SERVICE_TYPES['RESOURCE_SERVICES']['REGIONAL'].keys()
-    }
+    # 修改数据结构，使用区域作为第一层键
+    all_resources = {}
     
     # 遍历每个需要region的服务
     for service_name, service_info in SERVICE_TYPES['RESOURCE_SERVICES']['REGIONAL'].items():
@@ -80,6 +80,10 @@ def get_regional_resources(account_info, client_profile):
         # 遍历每个region
         for region in service_info['regions']:
             print(f"正在获取 {region} 区域的资源...")
+            
+            # 初始化区域的资源字典
+            if region not in all_resources:
+                all_resources[region] = {}
             
             # 初始化服务
             service = service_info['service_class'](cred, client_profile, region)
@@ -96,7 +100,8 @@ def get_regional_resources(account_info, client_profile):
             for resource in resources:
                 resource['Region'] = region
             
-            all_resources[service_name].extend(resources)
+            # 将资源存储到对应区域的服务类型下
+            all_resources[region][service_name] = resources
     
     return all_resources
 
@@ -112,6 +117,8 @@ def get_global_resources(account_info, client_profile):
         
         if service_name == 'Domain':
             all_resources[service_name] = service.get_domains()
+        elif service_name == 'SSL':
+            all_resources[service_name] = service.get_certificates()
             
     return all_resources
 
@@ -194,53 +201,85 @@ def main():
         
         # 获取资源信息
         if args.mode in ['all', 'resources']:
-            # 获取需要region的资源
-            regional_resources = get_regional_resources(account_info, client_profile)
+            print(f"\n处理账号: {account_name}")
             
-            # 获取不需要region的资源
+            # 获取区域资源
+            regional_resources = get_regional_resources(account_info, client_profile)
+            # 获取全局资源
             global_resources = get_global_resources(account_info, client_profile)
             
-            # 显示结果（显示所有资源）
+            # 打印调试信息
+            print(f"\n告警模式配置:")
+            print(f"RESOURCE_ALERT_MODE: {os.getenv('RESOURCE_ALERT_MODE', 'all')}")
+            print(f"RESOURCE_ALERT_DAYS: {os.getenv('RESOURCE_ALERT_DAYS', '65')}")
+            
+            # SSL证书过滤前数量
+            ssl_count_before = len(global_resources.get('SSL', []))
+            
+            alert_mode = os.getenv("RESOURCE_ALERT_MODE", "all")
+            alert_days = int(os.getenv("RESOURCE_ALERT_DAYS", "65"))
+            
+            if alert_mode == "specific":
+                # 过滤区域资源
+                for region, region_resources in regional_resources.items():
+                    regional_resources[region] = {}
+                    for service_name, resources in region_resources.items():
+                        if service_name in ['CVM', 'CBS', 'Lighthouse']:
+                            regional_resources[region][service_name] = filter_resources_by_days(
+                                resources, 
+                                alert_days
+                            )
+                        else:
+                            regional_resources[region][service_name] = resources
+                
+                # 过滤全局资源
+                for resource_type in global_resources:
+                    global_resources[resource_type] = filter_resources_by_days(
+                        global_resources[resource_type], 
+                        alert_days
+                    )
+                    
+                # SSL证书过滤后数量
+                ssl_count_after = len(global_resources.get('SSL', []))
+                print(f"\nSSL证书过滤情况:")
+                print(f"过滤前数量: {ssl_count_before}")
+                print(f"过滤后数量: {ssl_count_after}")
+            
+            # 显示结果
             display_results(account_name, regional_resources, global_resources)
             
             # 处理资源告警
             if any([alert_config['enable_wechat'], alert_config['enable_email']]):
-                # 过滤需要告警的资源（只用于告警）
+                # 根据告警模式决定是否过滤资源
                 filtered_regional_resources = {}
-                for service_name, resources in regional_resources.items():
-                    if service_name in ['CVM', 'CBS', 'Lighthouse']:
-                        filtered_regional_resources[service_name] = filter_resources_by_days(
-                            resources, alert_config
-                        )
-                    else:
-                        filtered_regional_resources[service_name] = resources
-                
                 filtered_global_resources = {}
-                for service_name, resources in global_resources.items():
-                    if service_name == 'Domain':
-                        filtered_global_resources[service_name] = filter_resources_by_days(
-                            resources, alert_config
-                        )
-                    else:
-                        filtered_global_resources[service_name] = resources
                 
-                # 检查是否有需要告警的资源
-                has_alert_resources = False
-                for resources in filtered_regional_resources.values():
-                    if resources:
-                        has_alert_resources = True
-                        break
-                for resources in filtered_global_resources.values():
-                    if resources:
-                        has_alert_resources = True
-                        break
-
-                # 在specific模式下，显示告警资源状态
                 if alert_config['resource_alert_mode'] == 'specific':
-                    if has_alert_resources:
-                        logger.info(f"发现剩余 {alert_config['resource_alert_days']} 天内即将到期的资源，准备发送告警...")
-                    else:
-                        logger.info(f"未发现剩余 {alert_config['resource_alert_days']} 天内即将到期的资源，跳过告警发送。")
+                    # specific 模式：只显示指定天数内的资源
+                    for region, region_resources in regional_resources.items():
+                        filtered_regional_resources[region] = {}
+                        for service_name, resources in region_resources.items():
+                            if service_name in ['CVM', 'CBS', 'Lighthouse']:
+                                filtered_regional_resources[region][service_name] = filter_resources_by_days(
+                                    resources, 
+                                    alert_config['resource_alert_days']
+                                )
+                            else:
+                                filtered_regional_resources[region][service_name] = resources
+                    
+                    # 过滤全局资源
+                    for service_name, resources in global_resources.items():
+                        if service_name in ['Domain', 'SSL']:
+                            filtered_global_resources[service_name] = filter_resources_by_days(
+                                resources,
+                                alert_config['resource_alert_days']
+                            )
+                        else:
+                            filtered_global_resources[service_name] = resources
+                else:
+                    # all 模式：显示所有资源
+                    filtered_regional_resources = regional_resources
+                    filtered_global_resources = global_resources
                 
                 # 发送企业微信通知
                 if alert_config['enable_wechat'] and wechat_service:
@@ -248,8 +287,7 @@ def main():
                         account_name, filtered_regional_resources, filtered_global_resources
                     )
                     
-                    if message:  # 只有在有需要告警的资源时才发送
-                        # 根据配置决定发送方式
+                    if message:  # 只有在有资源时才发送
                         if wechat_send_config["send_mode"] == "all":
                             results = wechat_service.send_message(message)
                         else:
@@ -270,17 +308,25 @@ def main():
                         account_name, filtered_regional_resources, filtered_global_resources
                     )
                     
-                    if content:  # 只有在有需要告警的资源时才发送
+                    if content:  # 只有在有资源时才发送
                         if email_service.send_email(subject, content):
                             logger.info("[资源告警] 邮件通知发送成功")
                         else:
                             logger.error("[资源告警] 邮件通知发送失败")
             
             # 写入数据库（使用原始未过滤的资源）
-            db_service.insert_cvm_instances(regional_resources.get('CVM', []))
-            db_service.insert_lighthouse_instances(regional_resources.get('Lighthouse', []))
-            db_service.insert_cbs_disks(regional_resources.get('CBS', []))
-            db_service.insert_domains(global_resources.get('Domain', []))
+            for region_data in regional_resources.values():
+                if 'CVM' in region_data:
+                    db_service.insert_cvm_instances(account_name, region_data['CVM'])
+                if 'Lighthouse' in region_data:
+                    db_service.insert_lighthouse_instances(account_name, region_data['Lighthouse'])
+                if 'CBS' in region_data:
+                    db_service.insert_cbs_disks(account_name, region_data['CBS'])
+
+            if 'Domain' in global_resources:
+                db_service.insert_domains(account_name, global_resources['Domain'])
+            if 'SSL' in global_resources:
+                db_service.insert_ssl_certificates(account_name, global_resources['SSL'])
         
         # 获取账单信息（账单告警不受资源告警天数的影响）
         if args.mode in ['all', 'billing']:
@@ -317,7 +363,7 @@ def main():
             # 写入数据库
             db_service.insert_billing_info(account_name, billing_info['balance'], billing_info['bill_details'])
     
-    # 关闭数据库连接
+    # 移到这里：所有账号处理完后再关闭连接
     db_service.close()
 
 def display_results(account_name, regional_resources, global_resources):
@@ -326,11 +372,9 @@ def display_results(account_name, regional_resources, global_resources):
     
     # 处理CVM资源
     cvm_resources = []
-    for resources in regional_resources.values():
-        if isinstance(resources, list):
-            for resource in resources:
-                if resource.get('Type') == 'CVM':
-                    cvm_resources.append(resource)
+    for region_data in regional_resources.values():
+        if 'CVM' in region_data:
+            cvm_resources.extend(region_data['CVM'])
     
     if cvm_resources:
         messages.append("=== 云服务器 ===")
@@ -345,11 +389,9 @@ def display_results(account_name, regional_resources, global_resources):
     
     # 处理轻量应用服务器资源
     lighthouse_resources = []
-    for resources in regional_resources.values():
-        if isinstance(resources, list):
-            for resource in resources:
-                if resource.get('Type') == 'Lighthouse':
-                    lighthouse_resources.append(resource)
+    for region_data in regional_resources.values():
+        if 'Lighthouse' in region_data:
+            lighthouse_resources.extend(region_data['Lighthouse'])
     
     if lighthouse_resources:
         messages.append("=== 轻量应用服务器 ===")
@@ -363,11 +405,9 @@ def display_results(account_name, regional_resources, global_resources):
     
     # 处理CBS资源
     cbs_resources = []
-    for resources in regional_resources.values():
-        if isinstance(resources, list):
-            for resource in resources:
-                if resource.get('Type') == 'CBS':
-                    cbs_resources.append(resource)
+    for region_data in regional_resources.values():
+        if 'CBS' in region_data:
+            cbs_resources.extend(region_data['CBS'])
     
     if cbs_resources:
         messages.append("=== 云硬盘 ===")
@@ -376,6 +416,30 @@ def display_results(account_name, regional_resources, global_resources):
                 f"名称: {resource['DiskName']}",
                 f"项目: {resource['ProjectName']}",
                 f"区域: {resource['Zone']}",
+                f"到期时间: {resource['ExpiredTime']}",
+                f"剩余天数: {resource['DifferDays']}天\n"
+            ])
+    
+    # 处理域名资源
+    domain_resources = global_resources.get('Domain', [])
+    if domain_resources:
+        messages.append("=== 域名 ===")
+        for resource in domain_resources:
+            messages.extend([
+                f"名称: {resource['Domain']}",
+                f"到期时间: {resource['ExpiredTime']}",
+                f"剩余天数: {resource['DifferDays']}天\n"
+            ])
+    
+    # 处理SSL证书资源
+    ssl_resources = global_resources.get('SSL', [])
+    if ssl_resources:
+        messages.append("=== SSL证书 ===")
+        for resource in ssl_resources:
+            messages.extend([
+                f"域名: {resource['Domain']}",
+                f"证书类型: {resource['ProductName']}",
+                f"项目: {resource.get('ProjectName', '未知项目')}",
                 f"到期时间: {resource['ExpiredTime']}",
                 f"剩余天数: {resource['DifferDays']}天\n"
             ])
