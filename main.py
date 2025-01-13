@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from utils.alert_utils import filter_resources_by_days
 from utils.log_utils import setup_logger
 from monitoring_services.ssl_service import SSLService
+from datetime import datetime
 
 # 加载环境变量
 load_dotenv()
@@ -196,149 +197,83 @@ def main():
     # 初始化数据库服务
     db_service = DatabaseService(db_config)
     
+    # 创建汇总数据结构
+    all_accounts_data = []
+    
     for account_name, account_info in accounts.items():
-        logger.info(f"腾讯云 {account_name} 账号信息")
+        account_data = {
+            'account_name': account_name,
+            'resources': {
+                'regional': {},
+                'global': {}
+            },
+            'billing': None
+        }
         
         # 获取资源信息
         if args.mode in ['all', 'resources']:
-            print(f"\n处理账号: {account_name}")
-            
-            # 获取区域资源
+            # 获取原始资源数据
             regional_resources = get_regional_resources(account_info, client_profile)
-            # 获取全局资源
             global_resources = get_global_resources(account_info, client_profile)
             
-            # 打印调试信息
-            print(f"\n告警模式配置:")
-            print(f"RESOURCE_ALERT_MODE: {os.getenv('RESOURCE_ALERT_MODE', 'all')}")
-            print(f"RESOURCE_ALERT_DAYS: {os.getenv('RESOURCE_ALERT_DAYS', '65')}")
-            
-            # SSL证书过滤前数量
-            ssl_count_before = len(global_resources.get('SSL', []))
-            
-            alert_mode = os.getenv("RESOURCE_ALERT_MODE", "all")
-            alert_days = int(os.getenv("RESOURCE_ALERT_DAYS", "65"))
-            
-            if alert_mode == "specific":
-                # 过滤区域资源
-                for region, region_resources in regional_resources.items():
-                    regional_resources[region] = {}
-                    for service_name, resources in region_resources.items():
-                        if service_name in ['CVM', 'CBS', 'Lighthouse']:
-                            regional_resources[region][service_name] = filter_resources_by_days(
-                                resources, 
-                                alert_days
-                            )
-                        else:
-                            regional_resources[region][service_name] = resources
+            # 根据告警模式决定是否过滤资源
+            if alert_config['resource_alert_mode'] == 'specific':
+                # 只在 specific 模式下过滤资源
+                filtered_regional = {}
+                for region, services in regional_resources.items():
+                    filtered_regional[region] = {}
+                    for service_type, resources in services.items():
+                        filtered_regional[region][service_type] = filter_resources_by_days(
+                            resources, 
+                            alert_config['resource_alert_days']
+                        )
                 
-                # 过滤全局资源
-                for resource_type in global_resources:
-                    global_resources[resource_type] = filter_resources_by_days(
-                        global_resources[resource_type], 
-                        alert_days
+                filtered_global = {}
+                for service_type, resources in global_resources.items():
+                    filtered_global[service_type] = filter_resources_by_days(
+                        resources, 
+                        alert_config['resource_alert_days']
                     )
-                    
-                # SSL证书过滤后数量
-                ssl_count_after = len(global_resources.get('SSL', []))
-                print(f"\nSSL证书过滤情况:")
-                print(f"过滤前数量: {ssl_count_before}")
-                print(f"过滤后数量: {ssl_count_after}")
+            else:
+                # all 模式下不过滤资源
+                filtered_regional = regional_resources
+                filtered_global = global_resources
             
-            # 显示结果
-            display_results(account_name, regional_resources, global_resources)
+            # 存储原始数据用于数据库
+            account_data['resources']['regional'] = regional_resources
+            account_data['resources']['global'] = global_resources
             
-            # 处理资源告警
-            if any([alert_config['enable_wechat'], alert_config['enable_email']]):
-                # 根据告警模式决定是否过滤资源
-                filtered_regional_resources = {}
-                filtered_global_resources = {}
-                
-                if alert_config['resource_alert_mode'] == 'specific':
-                    # specific 模式：只显示指定天数内的资源
-                    for region, region_resources in regional_resources.items():
-                        filtered_regional_resources[region] = {}
-                        for service_name, resources in region_resources.items():
-                            if service_name in ['CVM', 'CBS', 'Lighthouse']:
-                                filtered_regional_resources[region][service_name] = filter_resources_by_days(
-                                    resources, 
-                                    alert_config['resource_alert_days']
-                                )
-                            else:
-                                filtered_regional_resources[region][service_name] = resources
-                    
-                    # 过滤全局资源
-                    for service_name, resources in global_resources.items():
-                        if service_name in ['Domain', 'SSL']:
-                            filtered_global_resources[service_name] = filter_resources_by_days(
-                                resources,
-                                alert_config['resource_alert_days']
-                            )
-                        else:
-                            filtered_global_resources[service_name] = resources
-                else:
-                    # all 模式：显示所有资源
-                    filtered_regional_resources = regional_resources
-                    filtered_global_resources = global_resources
-                
-                # 发送企业微信通知
-                if alert_config['enable_wechat'] and wechat_service:
-                    message = wechat_service.format_resource_message(
-                        account_name, filtered_regional_resources, filtered_global_resources
-                    )
-                    
-                    if message:  # 只有在有资源时才发送
-                        if wechat_send_config["send_mode"] == "all":
-                            results = wechat_service.send_message(message)
-                        else:
-                            results = wechat_service.send_message(
-                                message,
-                                bot_names=wechat_send_config["bot_names"]
-                            )
-                        
-                        # 输出发送结果
-                        for bot_name, success in results.items():
-                            status = "成功" if success else "失败"
-                            logger.info(f"[资源告警] 企业微信通知发送到 {bot_name}: {status}")
-                
-                # 发送邮件通知
-                if alert_config['enable_email'] and email_service:
-                    subject = f"腾讯云 {account_name} 资源到期提醒"
-                    content = email_service.format_resource_message(
-                        account_name, filtered_regional_resources, filtered_global_resources
-                    )
-                    
-                    if content:  # 只有在有资源时才发送
-                        if email_service.send_email(subject, content):
-                            logger.info("[资源告警] 邮件通知发送成功")
-                        else:
-                            logger.error("[资源告警] 邮件通知发送失败")
-            
-            # 写入数据库（使用原始未过滤的资源）
-            for region_data in regional_resources.values():
-                if 'CVM' in region_data:
-                    db_service.insert_cvm_instances(account_name, region_data['CVM'])
-                if 'Lighthouse' in region_data:
-                    db_service.insert_lighthouse_instances(account_name, region_data['Lighthouse'])
-                if 'CBS' in region_data:
-                    db_service.insert_cbs_disks(account_name, region_data['CBS'])
-
-            if 'Domain' in global_resources:
-                db_service.insert_domains(account_name, global_resources['Domain'])
-            if 'SSL' in global_resources:
-                db_service.insert_ssl_certificates(account_name, global_resources['SSL'])
-        
-        # 获取账单信息（账单告警不受资源告警天数的影响）
-        if args.mode in ['all', 'billing']:
-            # 获取账单信息
-            billing_info = get_billing_info(account_info, client_profile)
-            
-            # 显示账单信息
-            message = display_billing_info(account_name, billing_info)
-            
-            # 发送企业微信通知
+            # 发送企业微信通知（使用过滤后的数据）
             if alert_config['enable_wechat'] and wechat_service:
-                # 根据配置决定发送方式
+                message = wechat_service.format_resource_message(
+                    account_name, filtered_regional, filtered_global
+                )
+                if message:
+                    if wechat_send_config["send_mode"] == "all":
+                        results = wechat_service.send_message(message)
+                    else:
+                        results = wechat_service.send_message(
+                            message,
+                            bot_names=wechat_send_config["bot_names"]
+                        )
+                    
+                    for bot_name, success in results.items():
+                        status = "成功" if success else "失败"
+                        logger.info(f"[资源告警] 企业微信通知发送到 {bot_name}: {status}")
+            
+            # 存储过滤后的数据用于邮件通知
+            account_data['filtered_resources'] = {
+                'regional': filtered_regional,
+                'global': filtered_global
+            }
+            
+        # 获取账单信息
+        if args.mode in ['all', 'billing']:
+            account_data['billing'] = get_billing_info(account_info, client_profile)
+            
+            # 发送企业微信账单通知（保持原有逻辑）
+            if alert_config['enable_wechat'] and wechat_service:
+                message = display_billing_info(account_name, account_data['billing'])
                 if wechat_send_config["send_mode"] == "all":
                     results = wechat_service.send_message(message)
                 else:
@@ -347,23 +282,45 @@ def main():
                         bot_names=wechat_send_config["bot_names"]
                     )
                 
-                # 输出发送结果
                 for bot_name, success in results.items():
                     status = "成功" if success else "失败"
                     logger.info(f"[账单告警] 企业微信通知发送到 {bot_name}: {status}")
-            
-            # 发送邮件通知
-            if alert_config['enable_email'] and email_service:
-                subject = f"腾讯云 {account_name} 账单信息"
-                if email_service.send_email(subject, message):
-                    logger.info("[账单告警] 邮件通知发送成功")
-                else:
-                    logger.error("[账单告警] 邮件通知发送失败")
-            
-            # 写入数据库
-            db_service.insert_billing_info(account_name, billing_info['balance'], billing_info['bill_details'])
+        
+        all_accounts_data.append(account_data)
+        
+        # 写入数据库
+        for region_data in account_data['resources']['regional'].values():
+            if 'CVM' in region_data:
+                db_service.insert_cvm_instances(account_name, region_data['CVM'])
+            if 'Lighthouse' in region_data:
+                db_service.insert_lighthouse_instances(account_name, region_data['Lighthouse'])
+            if 'CBS' in region_data:
+                db_service.insert_cbs_disks(account_name, region_data['CBS'])
+
+        if 'Domain' in account_data['resources']['global']:
+            db_service.insert_domains(account_name, account_data['resources']['global']['Domain'])
+        if 'SSL' in account_data['resources']['global']:
+            db_service.insert_ssl_certificates(account_name, account_data['resources']['global']['SSL'])
     
-    # 移到这里：所有账号处理完后再关闭连接
+    # 所有账号处理完后，发送汇总邮件（使用过滤后的数据）
+    if alert_config['enable_email'] and email_service:
+        current_date = datetime.now().strftime('%Y-%m-%d')
+        subject = f"腾讯云资源和账单汇总报告 ({current_date})"
+        
+        # 使用过滤后的资源数据
+        for account_data in all_accounts_data:
+            if 'filtered_resources' in account_data:
+                account_data['resources'] = account_data['filtered_resources']
+        
+        content = email_service.format_summary_message(all_accounts_data)
+        
+        if content:
+            if email_service.send_email(subject, content):
+                logger.info("汇总邮件发送成功")
+            else:
+                logger.error("汇总邮件发送失败")
+    
+    # 关闭数据库连接
     db_service.close()
 
 def display_results(account_name, regional_resources, global_resources):
