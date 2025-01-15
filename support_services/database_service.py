@@ -169,6 +169,7 @@ class DatabaseService:
     def insert_billing_info(self, account_name: str, balance: float, bill_details: Dict):
         """插入账单数据"""
         if not self.enabled or not self.ensure_connection():
+            self.logger.warning("数据库未启用或连接失败，跳过账单数据写入")
             return
             
         total_count = 1  # 余额记录
@@ -176,10 +177,17 @@ class DatabaseService:
         
         try:
             # 插入余额记录
+            self.logger.debug(f"正在写入账户 {account_name} 的余额信息: {balance}")
             self.cursor.execute("""
                 INSERT INTO billing_info 
                 (account_name, project_name, service_name, balance, real_total_cost, total_cost, cash_pay_amount, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                balance = VALUES(balance),
+                real_total_cost = VALUES(real_total_cost),
+                total_cost = VALUES(total_cost),
+                cash_pay_amount = VALUES(cash_pay_amount),
+                updated_at = VALUES(updated_at)
             """, (
                 account_name,
                 '系统',
@@ -192,6 +200,7 @@ class DatabaseService:
             ))
             self.connection.commit()
             success_count += 1
+            self.logger.debug("余额信息写入成功")
         except Exception as e:
             self.logger.error(f"插入账户余额数据失败: {str(e)}")
         
@@ -203,10 +212,17 @@ class DatabaseService:
         for project_name, details in bill_details.items():
             for service_name, costs in details["services"].items():
                 try:
+                    self.logger.debug(f"正在写入项目 {project_name} 服务 {service_name} 的账单信息")
                     self.cursor.execute("""
                         INSERT INTO billing_info 
                         (account_name, project_name, service_name, balance, real_total_cost, total_cost, cash_pay_amount, updated_at)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON DUPLICATE KEY UPDATE
+                        balance = VALUES(balance),
+                        real_total_cost = VALUES(real_total_cost),
+                        total_cost = VALUES(total_cost),
+                        cash_pay_amount = VALUES(cash_pay_amount),
+                        updated_at = VALUES(updated_at)
                     """, (
                         account_name,
                         project_name,

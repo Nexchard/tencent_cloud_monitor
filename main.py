@@ -271,6 +271,14 @@ def main():
         if args.mode in ['all', 'billing']:
             account_data['billing'] = get_billing_info(account_info, client_profile)
             
+            # 添加这段代码来写入账单数据
+            if db_service.enabled:
+                db_service.insert_billing_info(
+                    account_name,
+                    account_data['billing']['balance'],
+                    account_data['billing']['bill_details']
+                )
+            
             # 发送企业微信账单通知（保持原有逻辑）
             if alert_config['enable_wechat'] and wechat_service:
                 message = display_billing_info(account_name, account_data['billing'])
