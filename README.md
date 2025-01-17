@@ -47,8 +47,8 @@
 
 1. 克隆项目
 ```bash
-git clone [项目地址]
-cd [项目目录]
+git clone https://github.com/Nexchard/tencent_cloud_monitor
+cd tencent_cloud_monitor
 ```
 
 2. 安装依赖
