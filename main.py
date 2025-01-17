@@ -3,7 +3,8 @@ import os
 from utils.client import get_client_profile, create_credential
 from utils.config import (
     load_accounts, load_wechat_config, load_wechat_send_config, 
-    load_email_config, load_alert_config, load_service_regions
+    load_email_config, load_alert_config, load_service_regions,
+    load_yunzhijia_config, load_yunzhijia_send_config
 )
 from monitoring_services.cvm_service import CVMService
 from monitoring_services.cbs_service import CBSService
@@ -19,6 +20,7 @@ from utils.alert_utils import filter_resources_by_days
 from utils.log_utils import setup_logger
 from monitoring_services.ssl_service import SSLService
 from datetime import datetime
+from support_services.yunzhijia_service import YunZhiJiaService
 
 # 加载环境变量
 load_dotenv()
@@ -180,9 +182,14 @@ def main():
         service['regions'] = service_regions['resources']
     SERVICE_TYPES['BILLING_SERVICES']['Billing']['region'] = service_regions['billing']
     
+    # 加载云之家配置
+    yunzhijia_bots = load_yunzhijia_config()
+    yunzhijia_send_config = load_yunzhijia_send_config()
+    
     # 初始化通知服务
     wechat_service = WeChatService(wechat_bots) if alert_config['enable_wechat'] else None
     email_service = EmailService(email_config) if alert_config['enable_email'] else None
+    yunzhijia_service = YunZhiJiaService(yunzhijia_bots) if alert_config['enable_yunzhijia'] else None
     
     # 数据库配置
     db_config = {
@@ -261,6 +268,24 @@ def main():
                         status = "成功" if success else "失败"
                         logger.info(f"[资源告警] 企业微信通知发送到 {bot_name}: {status}")
             
+            # 发送云之家通知
+            if alert_config['enable_yunzhijia'] and yunzhijia_service:
+                message = yunzhijia_service.format_resource_message(
+                    account_name, filtered_regional, filtered_global
+                )
+                if message:
+                    if yunzhijia_send_config["send_mode"] == "all":
+                        results = yunzhijia_service.send_message(message)
+                    else:
+                        results = yunzhijia_service.send_message(
+                            message,
+                            bot_names=yunzhijia_send_config["bot_names"]
+                        )
+                    
+                    for bot_name, success in results.items():
+                        status = "成功" if success else "失败"
+                        logger.info(f"[资源告警] 云之家通知发送到 {bot_name}: {status}")
+            
             # 存储过滤后的数据用于邮件通知
             account_data['filtered_resources'] = {
                 'regional': filtered_regional,
@@ -293,6 +318,23 @@ def main():
                 for bot_name, success in results.items():
                     status = "成功" if success else "失败"
                     logger.info(f"[账单告警] 企业微信通知发送到 {bot_name}: {status}")
+            
+            # 发送云之家账单通知
+            if alert_config['enable_yunzhijia'] and yunzhijia_service:
+                message = yunzhijia_service.format_billing_message(
+                    account_name, account_data['billing']
+                )
+                if yunzhijia_send_config["send_mode"] == "all":
+                    results = yunzhijia_service.send_message(message)
+                else:
+                    results = yunzhijia_service.send_message(
+                        message,
+                        bot_names=yunzhijia_send_config["bot_names"]
+                    )
+                
+                for bot_name, success in results.items():
+                    status = "成功" if success else "失败"
+                    logger.info(f"[账单告警] 云之家通知发送到 {bot_name}: {status}")
         
         all_accounts_data.append(account_data)
         

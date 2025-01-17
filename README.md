@@ -27,6 +27,7 @@
 
 ### 告警通知
 - 企业微信机器人（支持多机器人）
+- 云之家群组机器人（支持多机器人）
 - 邮件通知
 - 支持自定义告警规则
 
@@ -96,6 +97,7 @@ BILLING_SERVICE_REGION=ap-guangzhou
 # 告警开关
 ENABLE_WECHAT_ALERT=true
 ENABLE_EMAIL_ALERT=true
+ENABLE_YUNZHIJIA_ALERT=true
 
 # 告警模式
 RESOURCE_ALERT_MODE=specific  # all=全部告警, specific=指定天数告警
@@ -113,7 +115,18 @@ WECHAT_SEND_MODE=specific    # all=发送给所有机器人, specific=指定机�
 WECHAT_TARGET_BOTS=机器人1,机器人2
 ```
 
-3. 邮件配置
+3. 云之家配置
+```env
+# 机器人配置
+YUNZHIJIA_BOT1_NAME=机器人名称
+YUNZHIJIA_BOT1_WEBHOOK=webhook地址
+
+# 发送模式
+YUNZHIJIA_SEND_MODE=specific    # all=发送给所有机器人, specific=指定机器人
+YUNZHIJIA_TARGET_BOTS=机器人1,机器人2
+```
+
+4. 邮件配置
 ```env
 EMAIL_SMTP_SERVER=smtp.example.com
 EMAIL_SMTP_PORT=465
@@ -123,7 +136,7 @@ EMAIL_RECEIVERS=receiver1@example.com,receiver2@example.com
 EMAIL_USE_SSL=true
 ```
 
-4. 数据库配置
+5. 数据库配置
 ```env
 ENABLE_DATABASE=true
 DB_HOST=localhost
@@ -185,7 +198,12 @@ python scripts/init_database.py
 - 复制机器人的 Webhook 地址
 - 填入配置文件
 
-### 3. 邮件配置
+### 3. 云之家配置
+- 在云之家群组中添加机器人
+- 复制机器人的 Webhook 地址
+- 填入配置文件
+
+### 4. 邮件配置
 - QQ邮箱需要使用授权码
 - 需要开启 SMTP 服务
 - 注意选择正确的端口号

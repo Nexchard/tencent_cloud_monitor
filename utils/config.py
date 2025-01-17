@@ -73,6 +73,7 @@ def load_alert_config():
     return {
         'enable_email': os.getenv('ENABLE_EMAIL_ALERT', 'false').lower() == 'true',
         'enable_wechat': os.getenv('ENABLE_WECHAT_ALERT', 'false').lower() == 'true',
+        'enable_yunzhijia': os.getenv('ENABLE_YUNZHIJIA_ALERT', 'false').lower() == 'true',
         'resource_alert_mode': os.getenv('RESOURCE_ALERT_MODE', 'all'),
         'resource_alert_days': int(os.getenv('RESOURCE_ALERT_DAYS', '65'))
     } 
@@ -87,4 +88,35 @@ def load_service_regions():
             for region in os.getenv('RESOURCE_SERVICE_REGIONS', 'ap-guangzhou').split(',')
             if region.strip()
         ]
+    } 
+
+def load_yunzhijia_config():
+    """加载云之家配置"""
+    load_dotenv()
+    bots = {}
+    
+    # 遍历环境变量查找所有机器人配置
+    i = 1
+    while True:
+        bot_name = os.getenv(f'YUNZHIJIA_BOT{i}_NAME')
+        if not bot_name:
+            break
+            
+        bots[bot_name] = {
+            "webhook_url": os.getenv(f'YUNZHIJIA_BOT{i}_WEBHOOK')
+        }
+        i += 1
+    
+    return bots
+
+def load_yunzhijia_send_config():
+    """加载云之家发送配置"""
+    load_dotenv()
+    return {
+        "send_mode": os.getenv('YUNZHIJIA_SEND_MODE', 'all'),
+        "bot_names": [
+            name.strip() 
+            for name in os.getenv('YUNZHIJIA_TARGET_BOTS', '').split(',')
+            if name.strip()
+        ] if os.getenv('YUNZHIJIA_TARGET_BOTS') else None
     } 
