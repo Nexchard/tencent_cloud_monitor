@@ -7,5 +7,6 @@ CREATE TABLE IF NOT EXISTS cvm_instances (
     project_name VARCHAR(255),
     expired_time TIMESTAMP,
     differ_days INT,
+    batch_number VARCHAR(50),
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ); 

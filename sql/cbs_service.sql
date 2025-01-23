@@ -7,5 +7,6 @@ CREATE TABLE IF NOT EXISTS cbs_disks (
     zone VARCHAR(255),
     expired_time TIMESTAMP,
     differ_days INT,
+    batch_number VARCHAR(50),
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ); 

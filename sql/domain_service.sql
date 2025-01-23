@@ -5,5 +5,6 @@ CREATE TABLE IF NOT EXISTS domains (
     domain_name VARCHAR(255),
     expired_time DATE,
     differ_days INT,
+    batch_number VARCHAR(50),
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ); 

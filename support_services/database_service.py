@@ -2,6 +2,7 @@ import mysql.connector
 from typing import List, Dict
 from datetime import datetime
 import logging
+import uuid
 
 class DatabaseService:
     def __init__(self, db_config):
@@ -14,6 +15,7 @@ class DatabaseService:
             
         self.db_config = db_config
         self.enabled = True
+        self.current_batch = self._generate_batch_number()
         try:
             self.connection = mysql.connector.connect(
                 host=db_config['host'],
@@ -28,6 +30,10 @@ class DatabaseService:
             self.logger.error(f"数据库连接失败: {str(e)}")
             self.enabled = False
 
+    def _generate_batch_number(self) -> str:
+        """生成批次号，使用时间戳格式：YYYYMMDDHHMMSS"""
+        return datetime.now().strftime('%Y%m%d%H%M%S')
+
     def insert_cvm_instances(self, account_name: str, instances: List[Dict]):
         if not self.enabled or not self.ensure_connection():
             return
@@ -37,14 +43,15 @@ class DatabaseService:
             try:
                 self.cursor.execute("""
                     INSERT INTO cvm_instances 
-                    (account_name, instance_id, instance_name, zone, project_name, expired_time, differ_days, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    (account_name, instance_id, instance_name, zone, project_name, expired_time, differ_days, batch_number, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE
                     instance_name = VALUES(instance_name),
                     zone = VALUES(zone),
                     project_name = VALUES(project_name),
                     expired_time = VALUES(expired_time),
                     differ_days = VALUES(differ_days),
+                    batch_number = VALUES(batch_number),
                     updated_at = VALUES(updated_at)
                 """, (
                     account_name,
@@ -54,6 +61,7 @@ class DatabaseService:
                     instance.get('ProjectName', '默认项目'),
                     instance['ExpiredTime'],
                     instance['DifferDays'],
+                    self.current_batch,
                     datetime.now()
                 ))
                 self.connection.commit()
@@ -73,13 +81,14 @@ class DatabaseService:
             try:
                 self.cursor.execute("""
                     INSERT INTO lighthouse_instances 
-                    (account_name, instance_id, instance_name, zone, expired_time, differ_days, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    (account_name, instance_id, instance_name, zone, expired_time, differ_days, batch_number, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE
                     instance_name = VALUES(instance_name),
                     zone = VALUES(zone),
                     expired_time = VALUES(expired_time),
                     differ_days = VALUES(differ_days),
+                    batch_number = VALUES(batch_number),
                     updated_at = VALUES(updated_at)
                 """, (
                     account_name,
@@ -88,6 +97,7 @@ class DatabaseService:
                     instance['Zone'],
                     instance['ExpiredTime'],
                     instance['DifferDays'],
+                    self.current_batch,
                     datetime.now()
                 ))
                 self.connection.commit()
@@ -107,14 +117,15 @@ class DatabaseService:
             try:
                 self.cursor.execute("""
                     INSERT INTO cbs_disks 
-                    (account_name, disk_id, disk_name, project_name, zone, expired_time, differ_days, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    (account_name, disk_id, disk_name, project_name, zone, expired_time, differ_days, batch_number, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE
                     disk_name = VALUES(disk_name),
                     project_name = VALUES(project_name),
                     zone = VALUES(zone),
                     expired_time = VALUES(expired_time),
                     differ_days = VALUES(differ_days),
+                    batch_number = VALUES(batch_number),
                     updated_at = VALUES(updated_at)
                 """, (
                     account_name,
@@ -124,6 +135,7 @@ class DatabaseService:
                     disk['Zone'],
                     disk['ExpiredTime'],
                     disk['DifferDays'],
+                    self.current_batch,
                     datetime.now()
                 ))
                 self.connection.commit()
@@ -143,12 +155,13 @@ class DatabaseService:
             try:
                 self.cursor.execute("""
                     INSERT INTO domains 
-                    (account_name, domain_id, domain_name, expired_time, differ_days, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    (account_name, domain_id, domain_name, expired_time, differ_days, batch_number, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE
                     domain_name = VALUES(domain_name),
                     expired_time = VALUES(expired_time),
                     differ_days = VALUES(differ_days),
+                    batch_number = VALUES(batch_number),
                     updated_at = VALUES(updated_at)
                 """, (
                     account_name,
@@ -156,6 +169,7 @@ class DatabaseService:
                     domain['Domain'],
                     domain['ExpiredTime'],
                     domain['DifferDays'],
+                    self.current_batch,
                     datetime.now()
                 ))
                 self.connection.commit()
@@ -180,13 +194,14 @@ class DatabaseService:
             self.logger.debug(f"正在写入账户 {account_name} 的余额信息: {balance}")
             self.cursor.execute("""
                 INSERT INTO billing_info 
-                (account_name, project_name, service_name, balance, real_total_cost, total_cost, cash_pay_amount, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                (account_name, project_name, service_name, balance, real_total_cost, total_cost, cash_pay_amount, batch_number, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                 balance = VALUES(balance),
                 real_total_cost = VALUES(real_total_cost),
                 total_cost = VALUES(total_cost),
                 cash_pay_amount = VALUES(cash_pay_amount),
+                batch_number = VALUES(batch_number),
                 updated_at = VALUES(updated_at)
             """, (
                 account_name,
@@ -196,6 +211,7 @@ class DatabaseService:
                 0,
                 0,
                 0,
+                self.current_batch,
                 datetime.now()
             ))
             self.connection.commit()
@@ -215,13 +231,14 @@ class DatabaseService:
                     self.logger.debug(f"正在写入项目 {project_name} 服务 {service_name} 的账单信息")
                     self.cursor.execute("""
                         INSERT INTO billing_info 
-                        (account_name, project_name, service_name, balance, real_total_cost, total_cost, cash_pay_amount, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        (account_name, project_name, service_name, balance, real_total_cost, total_cost, cash_pay_amount, batch_number, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON DUPLICATE KEY UPDATE
                         balance = VALUES(balance),
                         real_total_cost = VALUES(real_total_cost),
                         total_cost = VALUES(total_cost),
                         cash_pay_amount = VALUES(cash_pay_amount),
+                        batch_number = VALUES(batch_number),
                         updated_at = VALUES(updated_at)
                     """, (
                         account_name,
@@ -231,6 +248,7 @@ class DatabaseService:
                         costs['RealTotalCost'],
                         costs['TotalCost'],
                         costs['CashPayAmount'],
+                        self.current_batch,
                         datetime.now()
                     ))
                     self.connection.commit()
@@ -251,14 +269,15 @@ class DatabaseService:
                 self.cursor.execute("""
                     INSERT INTO ssl_certificates 
                     (account_name, certificate_id, domain, product_name, project_name, 
-                    expired_time, differ_days, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    expired_time, differ_days, batch_number, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE
                     domain = VALUES(domain),
                     product_name = VALUES(product_name),
                     project_name = VALUES(project_name),
                     expired_time = VALUES(expired_time),
                     differ_days = VALUES(differ_days),
+                    batch_number = VALUES(batch_number),
                     updated_at = VALUES(updated_at)
                 """, (
                     account_name,
@@ -268,6 +287,7 @@ class DatabaseService:
                     cert['ProjectName'],
                     cert['ExpiredTime'],
                     cert['DifferDays'],
+                    self.current_batch,
                     datetime.now()
                 ))
                 self.connection.commit()
